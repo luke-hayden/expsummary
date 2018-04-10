@@ -1,0 +1,405 @@
+---
+title: "Ubiquitous genes"
+author: "Luke Hayden"
+date: "March 2016"
+output: html_document
+---
+
+#Importing our datasets
+File:
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+setwd("~/Documents/expsummary")
+
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("EBSeq")
+#biocLite("DESeq2")
+
+library(ggplot2)
+library(DESeq2)
+library(rmarkdown)
+library(pracma)
+library(seqinr)
+library(ape)
+library(reshape2)
+library(scales)
+
+
+```
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# collect the names of the files with count data. there are 16 files, that correspond to 8 samples sequenced twice 
+lf=Sys.glob("*.count")
+
+# read these files sequentially and return the column with counts
+lht=sapply(lf,function(x){
+ht=read.table(x,h=T);return(ht[,2])})
+lht=data.frame(lht)
+
+# make a dataframe with 16 columns and the row names with gene ids
+ht=read.table(lf[[1]],h=T);
+row.names(lht)=ht[,1]
+
+# identify the columns with the number of lane and the sample id
+id=rep(1:8,2)
+lane=c(rep("L03",4),rep("L04",4),rep("L05",4),rep("L06",4))
+seq=c(rep("seq1",8),rep("seq2",8))
+type=rep(c("O1","O2","Y1","Y2","RO1","RO2","RY1","RY2"),2)
+
+# count the number of reads per sample
+nb=apply(lht,2,sum)
+
+# retain only the lines corresponding to genes
+lht1=lht[1:28666,]
+nb1=apply(lht1,2,sum)
+
+
+```
+The transcriptomic dataset used here is the 8-sample aging/regeneration one. 
+Samples are either:
+
+Young or old, regenerated or not, replicate 1 or 2. 
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+lht2=lht[28667:28671,]
+lht3=as.matrix(rbind(lht2[c(1,3,5),],nb1))
+ht=lht1[,1:8]+lht1[,9:16]
+colnames(ht) <- c("O1", "O2", "Y1", "Y2", "OR1", "OR2", "YR1", "YR2")
+```
+We perform the following tests of differential expression (aging dataset):
+
+-DE old vs young
+
+-DE regenerated vs not
+
+-DE between the two replicates of each of the four conditions
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#Age
+colData <- data.frame(age=c("O","O","Y","Y","O","O","Y","Y"),type=c(rep("NR",4),rep("R",4)),rep=c(rep(c("rep1","rep2"),4)))
+
+dds <- DESeqDataSetFromMatrix(countData = ht,
+colData = colData,
+design = ~ age)
+
+#DE age
+ddsA <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"],
+colData = colData[colData$type=="NR",],
+design = ~ age)
+ddsA <- DESeq(ddsA)
+resA05 <- results(ddsA, alpha=0.05)
+
+
+a <- data.frame(resA05)
+a <- subset(a, !(is.na(a$log2FoldChange)))
+a <- subset(a, !(is.na(a$padj)))
+a$sig <- a$padj <0.05
+
+
+p= ggplot(a, aes(x=log2FoldChange, y=padj, colour=sig)) +geom_point(alpha=0.25, size=0.06) +theme_bw() +scale_colour_manual(values=c("dark blue", "red3")) +xlab("Log2FoldChange in expression between old and young") +ylab("Adjusted p-value") + theme(legend.direction = 'horizontal', legend.position = 'none') 
+
+ggsave(plot=p,height=4,width=10,dpi=200, filename=paste("DE.pdf"), useDingbats=FALSE, limitsize = FALSE)
+
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#DE regen
+ddsR <- DESeqDataSetFromMatrix(countData = ht[,colData$age=="Y"],
+colData = colData[colData$age=="Y",],
+design = ~ type)
+ddsR <- DESeq(ddsR)
+resR05 <- results(ddsR, alpha=0.05)
+
+
+
+#DE OR1 vs 2
+ddsOR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="R"&colData$age=="O"],
+colData = colData[colData$type=="R"&colData$age=="O",],
+design = ~ rep)
+ddsOR <- DESeq(ddsOR,fitType='local')
+resOR01 <- results(ddsOR, alpha=0.1)
+nameResOR01=row.names(resOR01[!is.na(resOR01$padj)&resOR01$padj<0.1,])
+
+#DE YR 1 vs 2
+ddsYR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="R"&colData$age=="Y"],
+colData = colData[colData$type=="R"&colData$age=="Y",],
+design = ~ rep)
+ddsYR <- DESeq(ddsYR,fitType='local')
+resYR01 <- results(ddsYR, alpha=0.1)
+nameResYR01=row.names(resYR01[!is.na(resYR01$padj)&resYR01$padj<0.1,])
+
+
+#DE ONR 1 vs 2
+ddsONR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"&colData$age=="O"],
+colData = colData[colData$type=="NR"&colData$age=="O",],
+design = ~ rep)
+ddsONR <- DESeq(ddsONR,fitType='local')
+resONR01 <- results(ddsONR, alpha=0.1)
+nameResONR01=row.names(resONR01[!is.na(resONR01$padj)&resONR01$padj<0.1,])
+
+#DE YNR 1 vs 2
+ddsYNR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"&colData$age=="Y"],
+colData = colData[colData$type=="NR"&colData$age=="Y",],
+design = ~ rep)
+ddsYNR <- DESeq(ddsYNR,fitType='local')
+resYNR01 <- results(ddsYNR, alpha=0.1)
+nameResYNR01=row.names(resYNR01[!is.na(resYNR01$padj)&resYNR01$padj<0.1,])
+
+
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# collect the names of the files with .tsv data. there are 4 files
+lf=Sys.glob("*.tsv")
+
+
+#read these in
+reads <- sapply(lf, function(x){
+r=read.table(x, skip=1);return(r$V4)})
+reads <- data.frame(reads)
+
+
+desc <- read.table("NKS-01_6_S1_abundance.tsv", h=T)
+row.names(reads) <- desc$target_id
+
+colnames(reads) <- c("Before_Amputation", "Regenerated", "Amputated+3d", "Amputated+6d")
+
+rreads <- round(reads)
+
+sums <- colSums(reads)
+```
+We then convert the counts into RPKMs
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#Calculating RPKMs
+htRPKMs <- ht
+NbyL <- as.data.frame(desc$length %o% colSums(ht))
+htRPKMs <- htRPKMs/NbyL
+htRPKMs <- htRPKMs*1000000000
+
+mr <- rowMeans(htRPKMs)
+quantile(mr, 0.95)
+
+thtr <- subset(htRPKMs, mr> quantile(mr, 0.95))
+
+
+
+readsRPKMs <- reads
+NbyL <- as.data.frame(desc$length %o% sums)
+readsRPKMs <- readsRPKMs/NbyL
+readsRPKMs <- readsRPKMs*1000000000
+
+rmr <- rowMeans(readsRPKMs)
+
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+
+
+el <- data.frame(mr, isho =mr> quantile(mr, 0.9), rmr, ishr = rmr> quantile(rmr, 0.9))
+
+
+
+#ggplot(el, aes(x=mr, y=rmr, colour=isho, fill=ishr)) +geom_point(shape=21) +scale_y_log10() +scale_x_log10() +ylab("Mean Expression in Regeneration Dataset (RPKMs)") +xlab("Mean Expression in Aging Dataset (RPKMs)") + scale_colour_manual(values=c("orangered", "forest green"), breaks=c(TRUE, FALSE), labels=c(">90th centile", "<90th centile"), name="Meaning Aging Dataset Expression") +scale_fill_manual(values=c("black", "white"),name="Mean Regenerating Dataset Expression", labels=c(">90th centile", "<90th centile"))
+
+
+
+subset(el, el$isho==TRUE & el$ishr ==TRUE)
+
+```
+#Imposing cutoffs
+
+
+Let
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+cutoff <- 0.8
+
+isc<- htRPKMs[,1]> quantile(htRPKMs[,1], cutoff)
+
+for (i in 1:length(colnames(htRPKMs))){
+  isc <- isc & (htRPKMs[,i]> quantile(htRPKMs[,i], cutoff))
+}
+
+
+for (i in 1:length(colnames(readsRPKMs))){
+  isc <- isc & (readsRPKMs[,i]> quantile(readsRPKMs[,i], cutoff))
+}
+pc <- toString((1-cutoff)*100)
+
+mhtRPKMs <- melt(cbind(htRPKMs,readsRPKMs, isc))
+ggplot(mhtRPKMs, aes(y=value, x=variable, colour=isc)) +geom_point(alpha=0.15, shape=95, size=8) +scale_y_log10() +scale_colour_manual(values=c("cornflower blue", "red3"),breaks=c(TRUE, FALSE), labels=c(">80th centile all samples", "<80th centile"), name="Gene cut-off") +ylab("Log Expression level (RPKMs)") +ggtitle(paste(sum(isc), "genes in top", toString((1-cutoff)*100), "% expression for all samples" ))  +xlab("Transcriptomic Sample") + theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+#sum(isc)
+
+```
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+sl <- rownames(subset(htRPKMs, isc ==TRUE ))
+fastaprot=read.fasta(file="phaw.3.0.genes.prot.fa")
+
+
+cfastaprot <- subset(fastaprot, names(fastaprot) %in%sl)
+
+cfastaprot <- cfastaprot[order(names(cfastaprot))]
+
+write.fasta(cfastaprot,names=names(cfastaprot),file=paste("ubiqgenesprot.fa", sep=""))
+
+
+
+```
+
+
+#BLAST our genes (from Parhyale) against the BUSCO set of single copy orthologous genes. 
+
+How many have hits?
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#system("makeblastdb -in Busco-arth-var.fasta -dbtype 'prot' -out buscoarth")
+
+system("blastp -db buscoarth -query ubiqgenesprot.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > vsbuscblast.txt" )
+
+vsbuscBlast <- read.table("vsbuscblast.txt", sep="\t")
+
+colnames(vsbuscBlast) <- c("Query", "Target", "Percent_ID", "Ali_len", "E_val", "bitscore", "Hit_name_long" )
+
+write.csv(vsbuscBlast, file =paste("ubiqvsbuscBlastResults", fileID, ".csv"))
+
+
+cgTopBlast <- subset(vsbuscBlast, !(duplicated(vsbuscBlast$Query)))
+cgTopBlast <- subset(cgTopBlast, !(duplicated(cgTopBlast$Target)))
+
+print(length(cgTopBlast$Query))
+```
+
+#BLAST this BUSCO set back against the Parhyale protein set
+
+Here we only want those genes which are the best hit in the Parhyale genome; these will be the real homologues of the genes from the BUSCO list in Parhyale. We have this many:
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+buscofastaprot=read.fasta(file="Busco-arth-var.fasta")
+mbg <- subset(buscofastaprot, names(buscofastaprot) %in%cgTopBlast$Target)
+
+write.fasta(mbg,names=names(mbg),file=paste("buscblastback.fa", sep=""))
+cgTopBlast$Target <- as.character(cgTopBlast$Target)
+topbvp$Query <- as.character(topbvp$Query)
+
+
+#system("blastp -db parhy1 -query buscblastback.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > buscvsparhyblast.txt" )
+
+buscvparBlast <- read.table("buscvsparhyblast.txt", sep="\t")
+
+colnames(buscvparBlast) <- c("Query", "Target", "Percent_ID", "Ali_len", "E_val", "bitscore", "Hit_name_long" )
+topbvp <- subset(buscvparBlast, !(duplicated(buscvparBlast$Query)))
+
+topbvp <- topbvp[order(topbvp$Query),]
+cgTopBlast <- cgTopBlast[order(cgTopBlast$Target),]
+
+topbvp$Query %in% names(mbg)
+
+bco <- data.frame(origpar = as.character(cgTopBlast$Query), buschit =as.character(cgTopBlast$Target), buscblasted = as.character(topbvp$Query), parhit = as.character(topbvp$Target), stringsAsFactors=FALSE)
+
+print(sum(bco$parhit == bco$origpar))
+
+
+fl <- subset(bco$origpar,bco$parhit == bco$origpar)
+
+
+
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#fastaprot=read.fasta(file="phaw.3.0.genes.prot.fa")
+
+flfastaprot <- fastaprot[names(fastaprot) %in% fl]
+
+flfastaprot <- flfastaprot[order(names(flfastaprot))]
+
+write.fasta(flfastaprot,names=names(flfastaprot),file=paste("ubiqflgenesprot.fa", sep=""))
+
+print(paste("ubiqflgenesprot.fa", sep=""))
+
+
+```
+
+
+
+#BLAST our genes (from Parhyale) against a set of arthropod protein sets
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#system("makeblastdb -in arthropodSet.fasta -dbtype 'prot' -out arth1")
+
+system("blastp -db arth1 -query ubiqflgenesprot.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > ubiqvsarthblast.txt" )
+
+ubiqvsarthBlast <- read.table("ubiqvsarthblast.txt", sep="\t")
+
+colnames(ubiqvsarthBlast) <- c("Query", "Target", "Percent_ID", "Ali_len", "E_val", "bitscore", "Hit_name_long" )
+
+topuvarth <- subset(ubiqvsarthBlast, !duplicated(ubiqvsarthBlast$Query))
+
+print(topuvarth$Hit_name_long)
+
+
+
+```
+
+#BLAST our genes (from Parhyale) against Drosophila
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#system("makeblastdb -in arthropodSet.fasta -dbtype 'prot' -out arth1")
+
+#system("blastp -db  dros1 -query ubiqflgenesprot.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > ubiqvsdrosblast.txt" )
+
+ubiqvsdrosBlast <- read.table("ubiqvsdrosblast.txt", sep="\t")
+
+colnames(ubiqvsdrosBlast) <- c("Query", "Target", "Percent_ID", "Ali_len", "E_val", "bitscore", "Hit_name_long" )
+
+topuvdros <- subset(ubiqvsdrosBlast, !duplicated(ubiqvsdrosBlast$Query))
+
+print(topuvdros$Hit_name_long)
+
+
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+ubco <- subset(bco, bco$parhit %in% topuvarth$Query)
+ubco <- ubco[order(ubco$parhit),]
+ubco <- subset(ubco, !duplicated(substr(ubco$buschit,1,11)))
+
+
+resubiq <- data.frame(ID = topuvarth$Query, arthblast = topuvarth$Hit_name_long, drosblast = topuvdros$Hit_name_long, BUSCO= ubco$buschit)
+
+
+write.csv(resubiq, file =paste("ubiquitous.csv"))
+
+```
+
+#Nucleotide fasta of our genes
+Output this file to: 
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+
+fastanuc=read.fasta(file="phaw.3.0.genes.nuc.fa")
+
+i <- names(fastanuc) %in% fl
+cfastanuc <- fastanuc[i]
+
+s <- paste(cgd$name, names(cfastanuc))
+names(cfastanuc) <- s
+
+write.fasta(cfastanuc,names=names(cfastanuc),file=paste("ubiqflgenesnuc.fa", sep=""))
+print(paste("ubiqflgenesnuc.fa", sep=""))
+
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+
+```

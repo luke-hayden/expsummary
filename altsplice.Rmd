@@ -1,0 +1,308 @@
+---
+title: "altsplice"
+output: html_document
+---
+
+
+#Importing our datasets
+File:
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+setwd("~/Documents/expsummary")
+
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("EBSeq")
+#biocLite("DESeq2")
+
+library(ggplot2)
+library(DESeq2)
+library(rmarkdown)
+library(pracma)
+library(seqinr)
+library(ape)
+library(reshape2)
+library(TeachingDemos)
+
+
+# collect the names of the files with count data. there are 16 files, that correspond to 8 samples sequenced twice 
+lf=Sys.glob("*.count")
+
+# read these files sequentially and return the column with counts
+lht=sapply(lf,function(x){
+ht=read.table(x,h=T);return(ht[,2])})
+lht=data.frame(lht)
+
+# make a dataframe with 16 columns and the row names with gene ids
+ht=read.table(lf[[1]],h=T);
+row.names(lht)=ht[,1]
+
+# identify the columns with the number of lane and the sample id
+id=rep(1:8,2)
+lane=c(rep("L03",4),rep("L04",4),rep("L05",4),rep("L06",4))
+seq=c(rep("seq1",8),rep("seq2",8))
+type=rep(c("O1","O2","Y1","Y2","RO1","RO2","RY1","RY2"),2)
+
+# count the number of reads per sample
+nb=apply(lht,2,sum)
+
+# retain only the lines corresponding to genes
+lht1=lht[1:28666,]
+nb1=apply(lht1,2,sum)
+
+
+fileID <- "altsplice"
+print(fileID)
+
+```
+The transcriptomic dataset used here is the 8-sample aging/regeneration one. 
+Samples are either:
+
+Young or old, regenerated or not, replicate 1 or 2. 
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+lht2=lht[28667:28671,]
+lht3=as.matrix(rbind(lht2[c(1,3,5),],nb1))
+ht=lht1[,1:8]+lht1[,9:16]
+colnames(ht) <- c("O1", "O2", "Y1", "Y2", "OR1", "OR2", "YR1", "YR2")
+```
+We perform the following tests of differential expression (aging dataset):
+
+-DE old vs young
+
+-DE regenerated vs not
+
+-DE between the two replicates of each of the four conditions
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#Age
+colData <- data.frame(age=c("O","O","Y","Y","O","O","Y","Y"),type=c(rep("NR",4),rep("R",4)),rep=c(rep(c("rep1","rep2"),4)))
+
+dds <- DESeqDataSetFromMatrix(countData = ht,
+colData = colData,
+design = ~ age)
+
+#DE age
+ddsA <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"],
+colData = colData[colData$type=="NR",],
+design = ~ age)
+ddsA <- DESeq(ddsA)
+resA05 <- results(ddsA, alpha=0.05)
+
+#DE regen
+ddsR <- DESeqDataSetFromMatrix(countData = ht[,colData$age=="Y"],
+colData = colData[colData$age=="Y",],
+design = ~ type)
+ddsR <- DESeq(ddsR)
+resR05 <- results(ddsR, alpha=0.05)
+
+
+
+#DE OR1 vs 2
+ddsOR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="R"&colData$age=="O"],
+colData = colData[colData$type=="R"&colData$age=="O",],
+design = ~ rep)
+ddsOR <- DESeq(ddsOR,fitType='local')
+resOR01 <- results(ddsOR, alpha=0.1)
+nameResOR01=row.names(resOR01[!is.na(resOR01$padj)&resOR01$padj<0.1,])
+
+#DE YR 1 vs 2
+ddsYR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="R"&colData$age=="Y"],
+colData = colData[colData$type=="R"&colData$age=="Y",],
+design = ~ rep)
+ddsYR <- DESeq(ddsYR,fitType='local')
+resYR01 <- results(ddsYR, alpha=0.1)
+nameResYR01=row.names(resYR01[!is.na(resYR01$padj)&resYR01$padj<0.1,])
+
+
+#DE ONR 1 vs 2
+ddsONR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"&colData$age=="O"],
+colData = colData[colData$type=="NR"&colData$age=="O",],
+design = ~ rep)
+ddsONR <- DESeq(ddsONR,fitType='local')
+resONR01 <- results(ddsONR, alpha=0.1)
+nameResONR01=row.names(resONR01[!is.na(resONR01$padj)&resONR01$padj<0.1,])
+
+#DE YNR 1 vs 2
+ddsYNR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"&colData$age=="Y"],
+colData = colData[colData$type=="NR"&colData$age=="Y",],
+design = ~ rep)
+ddsYNR <- DESeq(ddsYNR,fitType='local')
+resYNR01 <- results(ddsYNR, alpha=0.1)
+nameResYNR01=row.names(resYNR01[!is.na(resYNR01$padj)&resYNR01$padj<0.1,])
+
+
+```
+
+
+We then convert the counts into RPKMs
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#Calculating RPKMs
+
+desc <- read.table("NKS-01_6_S1_abundance.tsv", h=T)
+
+htRPKMs <- ht
+NbyL <- as.data.frame(desc$length %o% colSums(ht))
+htRPKMs <- htRPKMs/NbyL
+htRPKMs <- htRPKMs*1000000000
+
+
+
+```
+
+
+
+#BLAST
+We use BLASTX against the gene models used for the assembly of the transcriptome. 
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#system("makeblastdb -in phaw.3.0.genes.prot.fa -dbtype 'prot' -out parhy1")
+
+
+#         #
+##       ##
+###     ####
+####   ######
+##### ########
+#ADD YOUR FILENAME HERE WITH THE SEQUENCES OF THE GENES YOU'RE INTERESTED IN
+##### ########
+####  #######
+###   ######
+##     ###
+#       #
+
+
+system("blastx -db parhy1 -query altspl.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > asblast.txt" )
+
+
+#system("blastx -db parhy1 -query distalphms.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > cgblast.txt" )
+
+asBlast <- read.table("asblast.txt", sep="\t")
+
+colnames(asBlast) <- c("Query", "Target", "Percent_ID", "Ali_len", "E_val", "bitscore", "Hit_name_long" )
+tasBlast <- subset(asBlast, asBlast$bitscore > 100)
+
+
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#Make a read table of just our putative markers
+
+
+ht <- ht[order(rownames(ht)),]
+tasBlast <- tasBlast[order(tasBlast$Target),]
+
+
+
+i <- row.names(ht) %in% tasBlast$Target
+cgenesReads <- subset(ht, i)
+cgenesReads <- cgenesReads[order(rownames(cgenesReads)),]
+
+i <- row.names(htRPKMs) %in% tasBlast$Target
+cgenesRPKMs <- subset(htRPKMs, i)
+cgenesRPKMs <- cgenesRPKMs[order(rownames(cgenesRPKMs)),]
+
+```
+
+#Sublist
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+cgd <- as.data.frame(cgenesRPKMs)
+
+#cgTopBlast <- cgTopBlast[order(cgTopBlast$Target),]
+cgd <- cgd[order(rownames(cgd)),]
+
+cgd$name <- tasBlast$Query
+
+cgd$BlastRes <- tasBlast$Target
+
+cgd$BLASTevalue <- tasBlast$E_val
+  
+cgd$meanRPKMs <- rowMeans(cgenesRPKMs)
+
+
+i <- row.names(resA05) %in% row.names(cgd)
+c <- subset(resA05, i)
+cgd$agelog2fc <- c$log2FoldChange
+cgd$agepadj <- c$padj
+
+i <- row.names(resR05) %in% row.names(cgd)
+c <- subset(resR05, i)
+cgd$reglog2fc <- c$log2FoldChange
+cgd$regenpadj <- c$padj
+
+i <- row.names(resONR01) %in% row.names(cgd)
+c <- subset(resONR01, i)
+cgd$ONRlog2fc <- c$log2FoldChange
+
+i <- row.names(resOR01) %in% row.names(cgd)
+c <- subset(resOR01, i)
+cgd$ORlog2fc <- c$log2FoldChange
+
+i <- row.names(resYNR01) %in% row.names(cgd)
+c <- subset(resYNR01, i)
+cgd$YNRlog2fc <- c$log2FoldChange
+
+i <- row.names(resYR01) %in% row.names(cgd)
+c <- subset(resYR01, i)
+cgd$YRlog2fc <- c$log2FoldChange
+
+cgd$MeanRepFC <- (abs(cgd$ORlog2fc) + abs(cgd$ONRlog2fc) +abs(cgd$YNRlog2fc) + abs(cgd$YRlog2fc))/4
+
+cgd79 <- subset(cgd, cgd$name == "Newbler_isotig79028")
+cgd72 <- subset(cgd, cgd$name == "Newbler_isotig72609")
+
+```
+
+#Nucleotide fasta of our genes
+Output this file to: 
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+
+fastanuc=read.fasta(file="phaw.3.0.genes.nuc.fa")
+
+i <- names(fastanuc) %in% row.names(cgd79)
+cfastanuc <- fastanuc[i]
+
+s <- paste(cgd79$name, names(cfastanuc))
+names(cfastanuc) <- s
+
+write.fasta(cfastanuc,names=names(cfastanuc),file=("79genesnuc.fa"))
+
+i <- names(fastanuc) %in% row.names(cgd72)
+cfastanuc <- fastanuc[i]
+
+s <- paste(cgd72$name, names(cfastanuc))
+names(cfastanuc) <- s
+
+write.fasta(cfastanuc,names=names(cfastanuc),file=("72genesnuc.fa"))
+
+```
+
+
+
+#Graphing
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+
+pdf('alsplice.pdf')
+plot(resA05$log2FoldChange, resA05$padj, type="o", pch=16, lty=0, cex = 0.3, col=adjustcolor("dark blue", alpha=0.5), xlab= "log2foldchange in expression for aging", ylab="adjusted p-value", main="Differential Expression Analysis: Effect of Aging")
+lines(resA05$log2FoldChange[resA05$padj <0.05], resA05$padj[resA05$padj <0.05],type="o", cex = 0.3,pch=16,lty=0, col=adjustcolor("red3", alpha=0.3))
+
+lines(cgd$agelog2fc, cgd$agepadj,type="o", cex = 1,pch=21,lty=0, col="black", bg="forest green")
+shadowtext(cgd$agelog2fc+2.7, cgd$agepadj,labels=cgd$BlastRes, col="forest green")
+
+dev.off()
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+system("blastx -db parhy1 -query 72pcr.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > 72blast.txt" )
+
+
+
+
+```

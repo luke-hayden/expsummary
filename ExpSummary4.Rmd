@@ -1,0 +1,573 @@
+---
+title: "Parhyale Transcriptomic expression summary"
+author: "Luke Hayden"
+date: "September 6th, 2016"
+output: html_document
+---
+
+#Importing our datasets
+File:
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+setwd("~/Documents/expsummary")
+
+#source("https://bioconductor.org/biocLite.R")
+#biocLite("EBSeq")
+#biocLite("DESeq2")
+
+library(ggplot2)
+library(DESeq2)
+library(rmarkdown)
+library(pracma)
+library(seqinr)
+library(ape)
+library(dplyr)
+library(tidyr)
+
+
+# collect the names of the files with count data. there are 16 files, that correspond to 8 samples sequenced twice 
+lf=Sys.glob("*.count")
+
+# read these files sequentially and return the column with counts
+lht=sapply(lf,function(x){
+ht=read.table(x,h=T);return(ht[,2])})
+lht=data.frame(lht)
+
+# make a dataframe with 16 columns and the row names with gene ids
+ht=read.table(lf[[1]],h=T);
+row.names(lht)=ht[,1]
+
+# identify the columns with the number of lane and the sample id
+id=rep(1:8,2)
+lane=c(rep("L03",4),rep("L04",4),rep("L05",4),rep("L06",4))
+seq=c(rep("seq1",8),rep("seq2",8))
+type=rep(c("O1","O2","Y1","Y2","RO1","RO2","RY1","RY2"),2)
+
+# count the number of reads per sample
+nb=apply(lht,2,sum)
+
+# retain only the lines corresponding to genes
+lht1=lht[1:28666,]
+nb1=apply(lht1,2,sum)
+
+
+fileID <- "junfos"
+print(fileID)
+
+```
+The transcriptomic dataset used here is the 8-sample aging/regeneration one. 
+Samples are either:
+
+Young or old, regenerated or not, replicate 1 or 2. 
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+lht2=lht[28667:28671,]
+lht3=as.matrix(rbind(lht2[c(1,3,5),],nb1))
+ht=lht1[,1:8]+lht1[,9:16]
+colnames(ht) <- c("O1", "O2", "Y1", "Y2", "OR1", "OR2", "YR1", "YR2")
+```
+We perform the following tests of differential expression (aging dataset):
+
+-DE old vs young
+
+-DE regenerated vs not
+
+-DE between the two replicates of each of the four conditions
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#Age
+colData <- data.frame(age=c("O","O","Y","Y","O","O","Y","Y"),type=c(rep("NR",4),rep("R",4)),rep=c(rep(c("rep1","rep2"),4)))
+
+dds <- DESeqDataSetFromMatrix(countData = ht,
+colData = colData,
+design = ~ age)
+
+#DE age
+ddsA <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"],
+colData = colData[colData$type=="NR",],
+design = ~ age)
+ddsA <- DESeq(ddsA)
+resA05 <- results(ddsA, alpha=0.05)
+
+#DE regen
+ddsR <- DESeqDataSetFromMatrix(countData = ht[,colData$age=="Y"],
+colData = colData[colData$age=="Y",],
+design = ~ type)
+ddsR <- DESeq(ddsR)
+resR05 <- results(ddsR, alpha=0.05)
+
+
+
+#DE OR1 vs 2
+ddsOR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="R"&colData$age=="O"],
+colData = colData[colData$type=="R"&colData$age=="O",],
+design = ~ rep)
+ddsOR <- DESeq(ddsOR,fitType='local')
+resOR01 <- results(ddsOR, alpha=0.1)
+nameResOR01=row.names(resOR01[!is.na(resOR01$padj)&resOR01$padj<0.1,])
+
+#DE YR 1 vs 2
+ddsYR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="R"&colData$age=="Y"],
+colData = colData[colData$type=="R"&colData$age=="Y",],
+design = ~ rep)
+ddsYR <- DESeq(ddsYR,fitType='local')
+resYR01 <- results(ddsYR, alpha=0.1)
+nameResYR01=row.names(resYR01[!is.na(resYR01$padj)&resYR01$padj<0.1,])
+
+
+#DE ONR 1 vs 2
+ddsONR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"&colData$age=="O"],
+colData = colData[colData$type=="NR"&colData$age=="O",],
+design = ~ rep)
+ddsONR <- DESeq(ddsONR,fitType='local')
+resONR01 <- results(ddsONR, alpha=0.1)
+nameResONR01=row.names(resONR01[!is.na(resONR01$padj)&resONR01$padj<0.1,])
+
+#DE YNR 1 vs 2
+ddsYNR <- DESeqDataSetFromMatrix(countData = ht[,colData$type=="NR"&colData$age=="Y"],
+colData = colData[colData$type=="NR"&colData$age=="Y",],
+design = ~ rep)
+ddsYNR <- DESeq(ddsYNR,fitType='local')
+resYNR01 <- results(ddsYNR, alpha=0.1)
+nameResYNR01=row.names(resYNR01[!is.na(resYNR01$padj)&resYNR01$padj<0.1,])
+
+
+```
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+# collect the names of the files with .tsv data. there are 4 files
+lf=Sys.glob("*.tsv")
+
+
+#read these in
+reads <- sapply(lf, function(x){
+r=read.table(x, skip=1);return(r$V4)})
+reads <- data.frame(reads)
+
+
+desc <- read.table("NKS-01_6_S1_abundance.tsv", h=T)
+row.names(reads) <- desc$target_id
+
+colnames(reads) <- c("Before_Amputation", "Regenerated", "Amputated+3d", "Amputated+6d")
+
+rreads <- round(reads)
+
+sums <- colSums(reads)
+```
+We also use the regenerating limb time series dataset. Four samples, before amputation, amputation +3d, amputation +6d, regenerated. 
+
+Here, we look for differential expression between the samples before amputation and after regeneration versus those taken during the regeneration process (+3d, +6d). 
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+regen <- as.factor(c(0,0,1,1))
+timeordering <- c(0,3,1,2)
+colData <- data.frame(as.factor(timeordering), regen)
+dds <- DESeqDataSetFromMatrix(countData = rreads,
+colData = colData,
+design = ~ regen)
+
+ddsA <- DESeqDataSetFromMatrix(countData = rreads,
+colData = colData,
+design = ~regen)
+ddsA <- DESeq(ddsA)
+resRegen <- results(ddsA, alpha=0.05)
+#summary(resRegen)
+
+
+i <- resRegen$padj < 0.05
+sigreg <- subset(resRegen, i)
+i <- sigreg$log2FoldChange > 0
+sigregup <- subset(sigreg, i)
+```
+
+
+We then convert the counts into RPKMs
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#Calculating RPKMs
+htRPKMs <- ht
+NbyL <- as.data.frame(desc$length %o% colSums(ht))
+htRPKMs <- htRPKMs/NbyL
+htRPKMs <- htRPKMs*1000000000
+
+readsRPKMs <- reads
+NbyL <- as.data.frame(desc$length %o% sums)
+readsRPKMs <- readsRPKMs/NbyL
+readsRPKMs <- readsRPKMs*1000000000
+
+
+
+```
+
+
+
+#BLAST
+We use BLASTP against the gene models used for the assembly of the transcriptome. 
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#system("makeblastdb -in phaw.3.0.genes.prot.fa -dbtype 'prot' -out parhy1")
+
+
+#         #
+##       ##
+###     ####
+####   ######
+##### ########
+#ADD YOUR FILENAME HERE WITH THE SEQUENCES OF THE GENES YOU'RE INTERESTED IN
+##### ########
+####  #######
+###   ######
+##     ###
+#       #
+
+
+listoffilestoblast <- c("1.fa", "2.fa", "3.fa")
+blastfilelist <- paste("blast", listoffilestoblast, ".txt", sep="")
+
+for (i in listoffilestoblast){
+  
+  print(paste("blastp -db parhy1 -query ", i,  " -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > blast", i , ".txt", sep= ""))
+  
+}
+
+df <- data.frame(matrix(ncol = 7, nrow = 0) )
+colnames(df) <- c("Query", "Target", "Percent_ID", "Ali_len", "E_val", "bitscore", "Hit_name_long" )
+
+givemeres <- 10
+
+
+for (i in blastfilelist){
+  currfile = read.csv(file= i)
+  nres <- min(givemeres, nrow(currfile))
+  currfile = currfile[1:nres, ]
+  df <- rbind(df, currfile)
+}
+
+
+
+
+system("blastp -db parhy1 -query junfos.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > cgblast.txt" )
+
+
+#system("blastx -db parhy1 -query distalphms.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > cgblast.txt" )
+
+cgBlast <- read.table("cgblast.txt", sep="\t")
+
+colnames(cgBlast) <- c("Query", "Target", "Percent_ID", "Ali_len", "E_val", "bitscore", "Hit_name_long" )
+
+```
+
+
+The BLAST results are exported in standard BLAST format as a .csv file. 
+File name:
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+write.csv(cgBlast, file =paste(fileID, "BlastResults.csv", sep=""))
+print(paste(fileID, "BlastResults.csv", sep=""))
+
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#Make a read table of just our putative markers
+i <- !(duplicated(cgBlast$Query))
+cgTopBlast <- subset(cgBlast, i)
+
+
+
+
+ht <- ht[order(rownames(ht)),]
+cgTopBlast <- cgTopBlast[order(cgTopBlast$Target),]
+
+#cgBlastcut <- cgBlast
+
+#cgTopFewBlast <- cgTopBlast
+#i <- cgTop
+
+i <- !(duplicated(cgTopBlast$Target))
+cgTopBlast <- subset(cgTopBlast, i)
+
+
+
+i <- row.names(ht) %in% cgTopBlast$Target
+cgenesReads <- subset(ht, i)
+cgenesReads <- cgenesReads[order(rownames(cgenesReads)),]
+
+i <- row.names(htRPKMs) %in% cgTopBlast$Target
+cgenesRPKMs <- subset(htRPKMs, i)
+cgenesRPKMs <- cgenesRPKMs[order(rownames(cgenesRPKMs)),]
+
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+cgd <- as.data.frame(cgenesRPKMs)
+
+cgTopBlast <- cgTopBlast[order(cgTopBlast$Target),]
+cgd$phname <- rownames(cgd)
+cgd <- left_join(cgd, cgTopBlast, by=c("phname"="Target"))
+              
+
+cgd <-  cgd[order(rownames(cgd)),]
+
+cgd$meanRPKMs <- rowMeans(cgenesRPKMs)
+
+
+#cgd <- cgd[c("name", "BLASTevalue", "meanRPKMs", "O1", "O2", "Y1", "Y2", "OR1", "OR2", "YR1", "YR2")]
+
+i <- rownames(resA05) %in% cgd$phname
+c <- subset(resA05, i)
+cgd$agelog2fc <- c$log2FoldChange
+cgd$agepadj <- c$padj
+
+
+i <- row.names(resR05) %in% cgd$phname
+c <- subset(resR05, i)
+cgd$reglog2fc <- c$log2FoldChange
+cgd$regenpadj <- c$padj
+
+i <- row.names(resONR01) %in% cgd$phname
+c <- subset(resONR01, i)
+cgd$ONRlog2fc <- c$log2FoldChange
+
+i <- row.names(resOR01) %in% cgd$phname
+c <- subset(resOR01, i)
+cgd$ORlog2fc <- c$log2FoldChange
+
+i <- row.names(resYNR01) %in% cgd$phname
+c <- subset(resYNR01, i)
+cgd$YNRlog2fc <- c$log2FoldChange
+
+i <- row.names(resYR01) %in% cgd$phname
+c <- subset(resYR01, i)
+cgd$YRlog2fc <- c$log2FoldChange
+
+cgd$MeanRepFC <- (abs(cgd$ORlog2fc) + abs(cgd$ONRlog2fc) +abs(cgd$YNRlog2fc) + abs(cgd$YRlog2fc))/4
+
+
+```
+Add the regen dataset info
+
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+i <- row.names(readsRPKMs) %in% cgd$phname
+c <- subset(readsRPKMs, i)
+cgd$t0_Before <- c$Before_Amputation
+cgd$t1_Amp3 <- c$`Amputated+3d`
+cgd$t2_Amp6 <- c$`Amputated+6d`
+cgd$t3_Reg <- c$Regenerated
+
+
+i <- row.names(resRegen) %in% cgd$phname
+c <- subset(resRegen, i)
+cgd$duReglog2fc <- c$log2FoldChange
+cgd$duRegpadj <- c$padj
+
+cgd$meanRPKMsallcond <- (cgd$O1 + cgd$O2 + cgd$Y1 + cgd$Y2 + cgd$OR1 + cgd$OR2 + cgd$YR1 + cgd$YR2 + cgd$t0_Before + cgd$t1_Amp3 + cgd$t2_Amp6 +cgd$t3_Reg)/12
+
+```
+
+
+
+#Protein fasta of our genes
+Output this file to: 
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+fastaprot=read.fasta(file="phaw.3.0.genes.prot.fa")
+
+
+i <- names(fastaprot) %in% row.names(cgd)
+cfastaprot <- fastaprot[i]
+
+cfastaprot <- cfastaprot[order(names(cfastaprot))]
+
+q <- summary(cfastaprot)
+q <- as.data.frame(q[1:length(cgd$name)])
+
+s <- paste(cgd$name, names(cfastaprot), sep="_")
+names(cfastaprot) <- s
+
+write.fasta(cfastaprot,names=names(cfastaprot),file=paste(fileID, "genesprot.fa", sep=""))
+
+write.fasta(cfastaprot,names=names(cfastaprot),file="genesprot.fa")
+print(paste(fileID, "genesprot.fa", sep=""))
+
+
+cgd$modelLength <- as.character(q[,1])
+
+```
+
+
+
+#Nucleotide fasta of our genes
+Output this file to: 
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+
+fastanuc=read.fasta(file="phaw.3.0.genes.nuc.fa")
+
+i <- names(fastanuc) %in% row.names(cgd)
+cfastanuc <- fastanuc[i]
+
+s <- paste(cgd$name, names(cfastanuc))
+names(cfastanuc) <- s
+
+write.fasta(cfastanuc,names=names(cfastanuc),file=paste(fileID, "genesnuc.fa", sep=""))
+print(paste(fileID, "genesnuc.fa", sep=""))
+
+```
+
+#BLAST our genes (from Parhyale) against a set of arthropod protein sets
+Output these results to:
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+#system("makeblastdb -in arthropodSet.fasta -dbtype 'prot' -out arth1")
+
+system("blastp -db arth1 -query genesprot.fa -outfmt '6 qseqid sseqid pident length evalue bitscore stitle' > vsarthblast.txt" )
+
+vsarthBlast <- read.table("vsarthblast.txt", sep="\t")
+
+colnames(vsarthBlast) <- c("Query", "Target", "Percent_ID", "Ali_len", "E_val", "bitscore", "Hit_name_long" )
+
+write.csv(vsarthBlast, file =paste("vsarthBlastResults", fileID, ".csv"))
+print(paste(fileID, "vsarthBlastResults.csv", sep=""))
+
+
+
+```
+
+
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+vsArthtop <-  subset(vsarthBlast, !(duplicated(vsarthBlast$Query)))
+vsArthtop$name <- sub("_phaw.*", "", vsArthtop$Query)
+
+cgd <- left_join(cgd, vsArthtop, by=c("Query"="name"))
+cgd$arthit <- sub("^.*\\| ", "", cgd$Hit_name_long.y)
+
+cgd$desc <- paste(cgd$phname, cgd$Query, cgd$arthit, sep="\n" )
+
+```
+
+
+#Graphing
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+
+p=ggplot(cgd, aes(x=name, y=meanRPKMs))+ geom_point(size=20, shape=95, color ="red3") + xlab("Gene name") + ylab("mean expression across conditions (RPKM)") +ggtitle("Comparing mean expression between given genes (aging dataset)")
+p
+#ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "meanRPKMs.pdf",sep=""), useDingbats=FALSE)
+#plot(cgd$name, cgd$meanRPKMs, col="red3", xlab="Gene", ylab="mean expression across conditions (RPKM)")
+#grid()
+
+p=ggplot(cgd, aes(x=name, y=meanRPKMs))+ geom_point(size=20, shape=95, color ="red3") + xlab("Gene name") + ylab("log mean expression across conditions (RPKM)") +ggtitle("Comparing expression between given genes(aging dataset)") + scale_y_log10()
+p
+#ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "meanRPKMslogagingonly.pdf",sep=""), useDingbats=FALSE)
+
+
+p=ggplot(cgd, aes(x=name, y=meanRPKMsallcond))+ geom_point(size=20, shape=95, color ="red3") + xlab("Gene name") + ylab("log mean expression across conditions (RPKM)") +ggtitle("Comparing expression between given genes (both datasets combined)") + scale_y_log10()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) 
+p
+ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "meanRPKMslogall.pdf",sep=""), useDingbats=FALSE)
+
+
+
+mcgd <- gather(cgd, key="variable", value="value", c("O1", "O2", "Y1", "Y2", "OR1", "OR2", "YR1", "YR2", "t0_Before", "t1_Amp3", "t2_Amp6", "t3_Reg"))
+
+
+#cgd <- cgd[c("name", "BLASTevalue", "meanRPKMs", "O1", "O2", "Y1", "Y2", "OR1", "OR2", "YR1", "YR2")]
+
+
+p=ggplot(mcgd, aes(x=variable, y=value, color=name, shape=name))+ geom_point(size=2) + xlab("Condition") + ylab("expression across conditions (RPKM)") +ggtitle("Comparing expression between given genes across conditions") + scale_shape_manual(values=1:nlevels(mcgd$name)) + scale_fill_brewer()+ theme(axis.text.x = element_text(angle = 60, hjust = 1)) + scale_x_discrete(labels=abbreviate) 
+
+#ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "RPKMscond.pdf",sep=""), useDingbats=FALSE)
+
+
+#Comparing across conditions
+p=ggplot(mcgd, aes(x=variable, y=value, color=name, shape=name))+ geom_point(size=2) + xlab("Condition") + ylab("log expression across conditions (RPKM)") +ggtitle("Comparing expression between given genes across conditions") + scale_shape_manual(values=1:nlevels(mcgd$name)) + scale_fill_brewer() + scale_y_log10() + theme(axis.text.x = element_text(angle = 60, hjust = 1)) + scale_x_discrete(labels=abbreviate) 
+p
+ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "RPKMscondlog.pdf",sep=""), useDingbats=FALSE)
+
+
+
+#p=ggplot(mcgd, aes(x=variable, y=value, color=name, shape=name))+ geom_point(size=2) + facet_wrap(~ name, ncol=2) + xlab("Gene name") + ylab("mean expression across conditions (RPKM)")+ggtitle("Comparing expression between given genes across conditions") + scale_shape_manual(values=1:nlevels(mcgd$name)) + scale_fill_brewer()
+
+
+#ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "RPKMscondpanels.pdf",sep=""), useDingbats=FALSE)
+
+
+#Compare expression between conditions
+p=ggplot(mcgd, aes(x=variable, y=value, color=name, shape=name))+ geom_point(size=2) + facet_wrap(~ name, ncol=2, scales ="free_y") + xlab("Gene name") + ylab("mean expression across conditions (RPKM)")+ggtitle("Comparing expression between given genes across conditions") + scale_shape_manual(values=1:nlevels(mcgd$name)) + scale_fill_brewer() + theme(axis.text.x = element_text(angle = 60, hjust = 1)) + scale_x_discrete(labels=abbreviate) 
+p
+ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "RPKMscondpanelsfree.pdf",sep=""), useDingbats=FALSE)
+
+p=ggplot(cgd, aes(x=name, y=MeanRepFC))+ geom_point(size=20, shape=95, color ="red3") + xlab("Gene name") + ylab("Mean between-replicate absolute log fold change in expression") +ggtitle("Comparing variation in expression between replicates (aging dataset)")
+p
+ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "betweenreps.pdf",sep=""), useDingbats=FALSE)
+
+#Expression dynamics in regen dataset
+m2cgd <- subset(mcgd, mcgd$variable %in% c("t0_Before", "t1_Amp3", "t2_Amp6", "t3_Reg"))
+p=ggplot(m2cgd, aes(x=variable, y=value)) +
+  facet_wrap(~ desc,ncol=2,scales = "free_y") +
+  xlab("Timepoint")+ylab("Expression (RPKM)") + 
+  geom_line(aes(group=desc), color="dark blue", size = 0.8) +
+  theme(panel.grid.minor.x=element_blank()) +
+  geom_point(color="dark blue", size = 2) +
+  theme(legend.position="none") +
+  ggtitle("Expression dynamics during regeneration")+ expand_limits(y=0)+
+  theme_minimal()+ 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1, size=6))+
+stat_summary(geom="line")
+  
+
+
+p
+
+ggsave(plot=p,height=6,width=6,dpi=200, filename=paste(fileID, "regendynamics.pdf",sep=""), useDingbats=FALSE)
+
+
+```
+
+#Viewing these as tables
+Data table (as below) exported to .csv file. Fields included are as follows:
+
+name: gene name as given in .fasta
+
+BLASTevalue: e-value of top BlAST hit
+
+meanRPKMs: mean expression level in RPKMs across all eight conditions in the aging dataset
+
+O1-YR2: expression in RPKMs for each condition in the aging dataset
+
+agelog2fc: log2foldchange in expression between old and young samples
+
+agepadj: adjusted p-value for significance of log2foldchange in expression between old and young samples
+
+reglog2fc: log2foldchange in expression between regenerated and not samples
+
+regenpadj: adjusted p-value for significance of log2foldchange in expression between regenerated and not samples
+
+ONR/OR/YNR/YRlog2fc: log2foldchange difference in expression between replicates of a given condition 
+
+MeanRepFC: mean log2foldchange difference in expression between all replicate pairs (this is a measure of the stochasticity of the gene's expression)
+
+t0_Before-t3_Reg: expression in RPKMs for each of the four conditions in the regenerating limb dataset
+
+duReglog2fc: log2foldchange in expression between regnerating and not regenerating samples
+
+duRegpadj: adjusted p-value for significance of logfoldchange between regnerating and not regenerating samples
+
+meanRPKMsallcond: mean RPKMs for all conditions across both datasets combined
+
+modelLength: the length of the predicted protein matching the original query
+
+
+File name:
+
+```{r, echo=FALSE, warning=FALSE, error=FALSE, message=FALSE}
+#print(cgd)
+write.csv(cgd, file =paste(fileID, "expsummary.csv", sep=""))
+print(paste(fileID, "expsummary.csv", sep=""))
+```
+
+
+
+
